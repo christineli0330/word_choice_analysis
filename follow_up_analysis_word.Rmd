@@ -1,0 +1,239 @@
+---
+title: "Word Choice Analysis"
+author: "Xinyue Li"
+date: "7/29/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/Christine/src/mem_dm/Choice_task_analysis")
+library(tidyverse)
+library(dplyr)
+library(lme4)
+library(readr)
+library(tidyr)
+library(ggplot2)
+library(sjPlot)
+library(sjmisc)
+library(Hmisc)
+#library(plyr)
+library(RColorBrewer)
+library(reshape2)
+library(lmerTest)
+choice = read.csv('C:/Users/Christine/Box Sync/data/mem_dm/cleaned_choice.csv')
+rating = read.csv('C:/Users/Christine/Box Sync/data/mem_dm/cleaned_rating.csv')
+mem = read.csv('C:/Users/Christine/Box Sync/data/mem_dm/mem.csv')
+food = read.csv("C:/Users/Christine/Box Sync/data/mem_dm/stimchar_final_touse.csv")
+food.mean = food %>% group_by(stimulus) %>% dplyr::summarize(tasty = mean(rating.tasty),
+                                                             pref = mean(choice.rating))
+mem = merge(food.mean, mem, by = 'stimulus')
+```
+
+## Correlations between value and memorability for each image
+
+There's no significant correlations between averaged value and memorability
+
+```{r, warning = FALSE}
+#calculate mean values for each stimuli
+values = rating %>% dplyr::group_by(image) %>% dplyr::summarise(value = mean(response))
+values = values %>% mutate(stimuli = str_replace(image, 'https://voices.uchicago.edu/bakkourlab/files/2019/04/',  ''))
+
+values_mem = merge(values, mem, by.x = 'stimuli', by.y = 'X', sort = TRUE)
+
+cor.test(x = values_mem$value, y = values_mem$Memorability)
+cor.test(x = choice$delta.value, y = choice$delta.mem)
+```
+
+## Z-scoring values and check distributions
+
+The distribution of ratings are not normal, some of them have a lot of extreme values
+Is there any way to make them more matched?
+```{r, warning = FALSE}
+## z-score memorability
+mem = mem %>% mutate(z.mem = scale(Memorability)) %>% 
+  mutate(image = paste("https://voices.uchicago.edu/bakkourlab/files/2019/04/", X, sep = ""))
+mem.merge = mem[c('z.mem', 'image', 'tasty', 'pref')]
+
+choice.z = merge(mem.merge, choice, by.x = 'image', by.y = 'stim_left') %>% 
+  rename(stim_left = image, z.mem.l = z.mem, tasty.l = tasty, pref.l = pref)
+choice.z = merge(mem.merge, choice.z, by.x = 'image', by.y = 'stim_right') %>% 
+  rename(stim_right = image, z.mem.r = z.mem, tasty.r = tasty, pref.r = pref)
+#calculate z delta mem
+choice.z = choice.z %>% mutate(z.delta.mem = z.mem.r-z.mem.l,
+                               delta.tasty = tasty.r - tasty.l,
+                               delta.pref = pref.r - pref.l)
+
+## z-score values for each subject
+#calculate z scores within each ID
+rating.merge = rating[c('ID', 'z', 'image')]
+rating.merge.l = rating.merge %>% rename(stim_left = image)
+rating.merge.r = rating.merge %>% rename(stim_right = image)
+
+#merge columns based on ID and stimuli names
+choice.z = merge(rating.merge.l, choice.z, by = c('ID', 'stim_left')) %>%
+  rename(z.value.l = z)
+choice.z = merge(rating.merge.r, choice.z, by = c('ID', 'stim_right')) %>% 
+  rename(z.value.r = z)
+choice.z = choice.z %>% mutate(z.delta.value = z.value.r - z.value.l)
+
+#correlation check for z-scored delta value and delta mem
+ave.rating = rating.merge %>% group_by(image) %>% dplyr::summarize(ave.value = mean(z))
+mem = merge(ave.rating, mem, by = 'image')
+cor.test(x = mem$ave.value, y = mem$Memorability, method = "pearson")
+cor.test(x = choice.z$z.delta.value, y = choice.z$z.delta.mem, method = "pearson")
+
+#plot the distribution of z-scored values for each subject
+rating %>% dplyr::group_by(ID) %>% ggplot(aes(x = z, group = ID)) + 
+  geom_histogram() + 
+  facet_wrap(~ID)
+
+```
+
+
+## Calculate value x memorability
+
+Calculate weighted value by value*memorability scores, and put weighted value as well as 
+Surprisingly, memorability weighted value cannot predict choices
+
+```{r, warning = FALSE}
+# calculate weighted memorability by using value*mem for left and right stimuli
+choice.z = choice.z %>% mutate(weighted.value.l = as.numeric(value_left)*as.numeric(mem_left),
+                               weighted.value.r = as.numeric(value_right)*as.numeric(mem_right),
+                               )
+choice.z = choice.z %>% mutate(delta.w.v = weighted.value.r-weighted.value.l)
+
+m1 = glmer(choseright~1+delta.value+delta.w.v+(1|ID), 
+           data = choice.z, family = "binomial")
+summary(m1)
+
+```
+
+## Interaction effect of z-scored delta value and delta mem
+
+Updated 3/31: calculated z scores of rating for each subject and calculated the delta value z
+
+No interaction effect found
+
+```{r}
+#generate the model
+m2 = glmer(choseright~1+z.delta.mem*z.delta.value+(1+z.delta.mem*z.delta.value|ID), 
+           data = choice.z, family = "binomial")
+summary(m2)
+plot_model(m2)
+plt.value = plot_model(m2, type = "pred", terms="z.delta.value [all]")
+plt.mem = plot_model(m2, type = "pred", terms="z.delta.mem [all]")
+
+confint(m2)
+```
+
+```{r}
+library(broom.mixed)
+tidy(m2,conf.int=TRUE,exponentiate=TRUE,effects="fixed")
+```
+
+
+
+## Model for RT
+
+RT ~ delta.mem*absolute.delta.value.z with mixed effects
+
+Only z scored delta value able to predict RT, where higher value results in lower RT.
+
+```{r}
+## model for RT
+choice.z = choice.z %>% mutate(abs.delta.v.z = abs(z.delta.value))
+m3 = lmer(log(rt)~1+abs(z.delta.mem)*abs.delta.v.z+(1+abs(z.delta.mem)*abs.delta.v.z|ID), 
+           data = choice.z)
+summary(m3)
+plot_model(m3)
+
+confint(m3,method="Wald")
+```
+```{r}
+tidy(m3,conf.int=TRUE,exponentiate=TRUE,effects="fixed")
+summary(m3)
+anova(m3)
+```
+
+### Model for RT and memorability for simple effect
+
+Cannot predict results
+
+```{r}
+#
+
+m4 = lmer(log(rt)~1+abs.mem + (1+abs.mem|ID), data = choice.z)
+
+summary(m4)
+
+m4.v = lmer(log(rt)~1+abs.delta.v.z + (1+abs.delta.v.z|ID), data = choice.z)
+
+summary(m4.v)
+
+```
+
+## Analysis for trials where delta.value close to 0
+
+```{r}
+choice.z = choice.z %>% mutate(abs.value = abs(delta.value))
+choice.l = choice.z %>% group_by(ID) %>% split(rank(choice.z$abs.value, ties.method='max')  >= nrow(choice.z)/2)
+choice.ll = choice.l[['FALSE']]
+
+m5 = glmer(choseright~1+z.delta.mem+(1+z.delta.mem|ID), 
+           data = choice.ll, family = "binomial")
+summary(m5)
+```
+
+### model for RT where delta.value close to 0
+
+```{r}
+choice.ll = choice.ll %>% mutate(abs.mem.z = abs(z.delta.mem))
+m6 = lmer(rt~1+z.delta.mem+(1+z.delta.mem|ID), 
+           data = choice.ll)
+summary(m6)
+```
+
+
+
+## Mean value from food folio dataset
+
+Averaged tastiness for each image
+```{r}
+
+m7 = glmer(choseright~1+z.delta.mem*delta.tasty+(1+z.delta.mem*delta.tasty|ID), 
+           data = choice.z, family = "binomial")
+summary(m7)
+plot_model(m7)
+plot_model(m7, type = "pred")
+
+```
+
+Averaged choice preference for each image
+
+```{r}
+m8 = glmer(choseright~1+z.delta.mem*delta.pref+(1+z.delta.mem*delta.pref|ID), 
+           data = choice.z, family = "binomial")
+summary(m8)
+```
+
+
+## Sample-level proportion of an item’s choice vs. memorability
+
+```{r}
+# calculate counts of being picked first
+left = choice.z %>% filter(choseright == 0) %>% select(stim_left)
+right = choice.z %>% filter(choseright == 1) %>% select(stim_right)
+picked.total = table(left) + table(right)
+count.total = table(choice.z$stim_left) + table(choice.z$stim_right)
+p.choice = data.frame(picked.total$left, picked.total$Freq/count.total$Freq)
+
+mem = merge(p.choice, mem, by.x = 'picked.total.left', by.y = 'image') 
+mem = mem %>% rename(p.choice = picked.total.Freq.count.total.Freq)
+
+# correlation test
+cor.test(x = mem$p.choice, y = mem$Memorability)
+
+```
+
+
