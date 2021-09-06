@@ -68,11 +68,17 @@ food.mean = food %>% group_by(stimulus) %>% dplyr::summarize(tasty = mean(rating
                                                              pref = mean(choice.rating))
 mem = merge(food.mean, mem, by = 'stimulus')
 
+
+###### This chunk can be simplified! ######
+
+# load rep data
+rep = read.csv('C:/Users/Christine/Box Sync/data/word_mem/rep/rep-mean.csv')
+mem = merge(rep, mem, by.x = "word", by.y = "food.item")
+
 #calculate mean values for each stimuli
 values = rating %>% dplyr::group_by(word) %>% dplyr::summarise(value = mean(as.numeric(response)))
 #combine mean values with mem measures
 values_mem = merge(values, mem, by.x = 'word', by.y = 'food.item.e', sort = TRUE)
-###### This chunk can be simplified! ######
 
 ```
 
@@ -187,10 +193,10 @@ Fitted mixted effects model for delta memorability and delta value, and found no
 
 ```{r, warning = FALSE}
 #mixted effects model for delta mem and delta value
-m1 = glmer(choseright~1+delta.mem*delta.value+(1+delta.mem*delta.value|ID), data = choice, family = "binomial")
-summary(m1)
+#m1 = glmer(choseright~1+delta.mem*delta.value+(1+delta.mem*delta.value|ID), data = choice, family = "binomial")
+#summary(m1)
 
-plot_model(m1, type = "pred")
+#plot_model(m1, type = "pred")
 ```
 
 ### Model for RT
@@ -281,9 +287,13 @@ choice.im = merge(choice, mem[c('food.item.e', 'Memorability')], by.x = "stim_le
 choice.im = merge(choice.im, mem[c('food.item.e', 'Memorability')], by.x = "stim_right", by.y = "food.item.e") %>% rename(image.m.r = Memorability) %>% mutate(delta.im.mem = image.m.r - image.m.l)
 
 #mixted effects model for delta mem and delta value
-m3 = glmer(choseright~1+delta.im.mem*delta.value+(1+delta.im.mem*delta.value|ID), data = choice.im, family = "binomial")
-summary(m3)
+# m3 = glmer(choseright~1+delta.im.mem*delta.value+(1+delta.im.mem*delta.value|ID), data = choice.im, family = "binomial")
+# summary(m3)
+# 
+# save(m3, file="C:/Users/Christine/Box Sync/data/mem_dm/model/m3_imagemem_wordvalue.RData")
 
+load("C:/Users/Christine/Box Sync/data/mem_dm/model/m3_imagemem_wordvalue.RData")
+summary(m3)
 plot_model(m3, type = "pred")
 ```
 
@@ -296,13 +306,87 @@ Did not find significant relation between word memorability and choice behavior
 ```{r}
 # run analysis with full sample
 # the model with interaction is overfitted, therefore only puts single effects here
-m4 = glmer(choseright~1+delta.mem+delta.value+(1+delta.mem+delta.value|ID), 
-           data = choice.full, 
-           family = "binomial",
-           glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000)))
-summary(m4)
 
+# m4 = glmer(choseright~1+delta.mem+delta.value+(1+delta.mem+delta.value|ID), 
+#            data = choice.full, 
+#            family = "binomial",
+#            glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000)))
+# 
+# save(m4, file="C:/Users/Christine/Box Sync/data/mem_dm/model/m4_full.RData")
+
+load("C:/Users/Christine/Box Sync/data/mem_dm/model/m4_full.RData")
+summary(m4)
 plot_model(m4, type = "pred")
 ```
 
+# Representative Data
+
+## Distribution (N = 40)
+
+```{r}
+# Distribution for individuals
+rep <- read.csv("C:/Users/Christine/Box Sync/data/word_mem/rep/rep-task.csv")
+rep <- rep %>% filter(ttype == "rep_rating")
+rep <- rep %>% dplyr::group_by(run_id) %>% dplyr::mutate(z.score = scale(as.numeric(response)))
+
+g.dis = rep %>% dplyr::group_by(run_id) %>% ggplot(aes(x = z.score, group = run_id)) + 
+  geom_histogram() + 
+  facet_wrap(~run_id) +
+  xlim(-3, 3)
+g.dis
+```
+
+## Averaged data for each image
+
+```{r}
+  hist(mem$rep.z, breaks = 20, main = paste("Distribution of Rep data"))
+
+```
+
+
+## Correlations
+
+```{r}
+# possible correlation between representativeness of images and memorability
+# found not null correlations
+cor.test(mem$rep.z, mem$word.mem)
+
+# no correlation with image memorability
+cor.test(mem$rep.z, mem$Memorability)
+
+# positive correlation with tastiness of food images
+cor.test(mem$tasty, mem$rep.z)
+
+values_mem %>% ggplot(aes(x = rep.z, y = tasty)) +
+  geom_point()+
+  geom_smooth(method = 'lm')
+
+# no correlation with averaged word values
+cor.test(values_mem$value, values_mem$rep.z)
+
+```
+
+## Try to fit in the model
+
+Add the difference of representativeness into the model of word value and image memorability
+
+p of choosing right ~ delta image memorability * delta word value * delta rep (with random effects)
+
+```{r}
+## Merge image rep data to choice task
+choice.rep = merge(choice.im, mem[c('food.item.e', 'rep.z')], by.x = "stim_left", by.y = "food.item.e") %>% rename(rep.l = rep.z)
+choice.rep = merge(choice.rep, mem[c('food.item.e', 'rep.z')], by.x = "stim_right", by.y = "food.item.e") %>% rename(rep.r = rep.z) %>% mutate(delta.rep = rep.r - rep.l)
+
+# run regression model for image mem, word value, and representativeness of image
+# m5 = glmer(choseright~1+delta.im.mem*delta.value*delta.rep+(1+delta.im.mem*delta.value*delta.rep|ID),
+#            data = choice.rep, family = "binomial",
+#            glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000)))
+
+load("C:/Users/Christine/Box Sync/data/mem_dm/m5_rep.RData")
+summary(m5) 
+
+#save(m5, file="C:/Users/Christine/Box Sync/data/mem_dm/m5_rep.RData")
+plot_model(m5, type = "pred")
+
+```
 
