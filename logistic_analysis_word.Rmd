@@ -117,6 +117,8 @@ knitr::include_graphics("choice_by_subject.png")
 
 #filter choice with beta >0 and p<0.05
 choice = filter(choice, (ID %in% filtered.b$ID | ID %in% c(10, 19, 60)))
+rating = filter(rating, (ID %in% filtered.b$ID | ID %in% c(10, 19, 60)))
+dat = filter(dat, (ID %in% filtered.b$ID | ID %in% c(10, 19, 60)))
 
 #plot regression lines after filtering
 choice_by_subject_e = choice %>% group_by(ID) %>% ggplot(aes(x = z.delta.value, y = choseright, group = ID)) + 
@@ -287,7 +289,7 @@ choice.im = merge(choice, mem[c('food.item.e', 'Memorability')], by.x = "stim_le
 choice.im = merge(choice.im, mem[c('food.item.e', 'Memorability')], by.x = "stim_right", by.y = "food.item.e") %>% rename(image.m.r = Memorability) %>% mutate(delta.im.mem = image.m.r - image.m.l)
 
 #mixted effects model for delta mem and delta value
-# m3 = glmer(choseright~1+delta.im.mem*delta.value+(1+delta.im.mem*delta.value|ID), data = choice.im, family = "binomial")
+# m3 = glmer(choseright~1+delta.im.mem*delta.value+(1+delta.im.mem*delta.value|ID), data = choice.rep, family = "binomial")
 # summary(m3)
 # 
 # save(m3, file="C:/Users/Christine/Box Sync/data/mem_dm/model/m3_imagemem_wordvalue.RData")
@@ -361,8 +363,6 @@ values_mem %>% ggplot(aes(x = rep.z, y = tasty)) +
   geom_point()+
   geom_smooth(method = 'lm')
 
-# no correlation with averaged word values
-cor.test(values_mem$value, values_mem$rep.z)
 
 ```
 
@@ -389,4 +389,73 @@ summary(m5)
 plot_model(m5, type = "pred")
 
 ```
+
+
+## Comparing models
+
+Model with representative data did not perform significantly better than the simpler version
+
+```{r}
+anova(m3, m5)
+
+
+```
+
+
+
+
+```{r}
+ichoice = read.csv('C:/Users/Christine/Box Sync/data/mem_dm/cleaned_choice.csv')
+irating = read.csv('C:/Users/Christine/Box Sync/data/mem_dm/cleaned_rating.csv')
+
+#calculate mean values for each stimuli
+ivalues = irating %>% dplyr::group_by(image) %>% dplyr::summarise(value = mean(response)) %>%
+  mutate(stimuli = str_replace(image, 'https://voices.uchicago.edu/bakkourlab/files/2019/04/',  ''))
+
+ivalues_mem = merge(ivalues, values_mem, by.x = 'stimuli', by.y = 'X.y', sort = TRUE) %>% rename(image_value = value.x, word_value = value.y)
+
+# image value is positively correlated with representativeness
+cor.test(x = ivalues_mem$image_value, ivalues_mem$rep.z)
+g.im.rep = ivalues_mem %>% ggplot(aes(x = image_value, y = rep.z)) +
+  geom_point()+
+  geom_smooth(method = "lm")
+g.im.rep
+
+# image value is highly correlated with word value
+cor.test(x = ivalues_mem$image_value, ivalues_mem$word_value)
+g.im.w.values = ivalues_mem %>% ggplot(aes(x = image_value, y = word_value)) +
+  geom_point()+
+  geom_smooth(method = "lm")
+g.im.w.values
+
+cor.test(x = ivalues_mem$rep.z, ivalues_mem$word_value)
+
+
+```
+
+
+## Putting rep data into image mem regression model
+
+Warning: the model is somewhat overfitted (boundary (singular) fit: see ?isSingular)
+
+Rep data cannot predict value-based choices of food images (relatively same as the previous model without rep data)
+
+```{r}
+# Merge image rep data to choice task
+ichoice.rep = merge(ichoice, mem[c('image', 'rep.z')], by.x = "stim_left", by.y = "image") %>% rename(rep.l = rep.z)
+ichoice.rep = merge(ichoice.rep, mem[c('image', 'rep.z')], by.x = "stim_right", by.y = "image") %>% rename(rep.r = rep.z) %>% mutate(delta.rep = rep.r - rep.l)
+
+# run regression model for image mem, image value, and representativeness of image
+# m6 = glmer(choseright~1+delta.mem*z.delta.value*delta.rep+(1+delta.mem*z.delta.value*delta.rep|ID),
+#            data = ichoice.rep, family = "binomial",
+#            glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000)))
+# save(m6, file="C:/Users/Christine/Box Sync/data/mem_dm/m6_rep_im.RData")
+
+load("C:/Users/Christine/Box Sync/data/mem_dm/m6_rep_im.RData")
+summary(m6) 
+
+plot_model(m6, type = "pred")
+
+```
+
 
